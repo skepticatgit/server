@@ -337,6 +337,8 @@
 			this.$el.on('urlChanged', _.bind(this._onUrlChanged, this));
 			this.$el.find('.select-all').click(_.bind(this._onClickSelectAll, this));
 			this.$el.find('.download').click(_.bind(this._onClickDownloadSelected, this));
+			this.$el.find('.move').click(_.bind(this._onClickMoveSelected, this));
+			this.$el.find('.copy').click(_.bind(this._onClickCopySelected, this));
 			this.$el.find('.delete-selected').click(_.bind(this._onClickDeleteSelected, this));
 
 			this.$el.find('.selectedActions a').tooltip({placement:'top'});
@@ -751,9 +753,77 @@
 				OCA.Files.Files.handleDownload(this.getDownloadUrl(files, dir, true), disableLoadingState);
 			}
 			else {
-				first = this.getSelectedFiles()[0];
+				var first = this.getSelectedFiles()[0];
 				OCA.Files.Files.handleDownload(this.getDownloadUrl(first.name, dir, true), disableLoadingState);
 			}
+			return false;
+		},
+
+		/**
+		 * Event handler for when clicking on "Move" for the selected files
+		 */
+		_onClickMoveSelected: function(event) {
+			var files;
+			var self = this;
+			var dir = this.getCurrentDirectory();
+			if (this.isAllSelected() && this.getSelectedFiles().length > 1) {
+				files = OC.basename(dir);
+				dir = OC.dirname(dir) || '/';
+			}
+			else {
+				files = _.pluck(this.getSelectedFiles(), 'name');
+			}
+
+			var moveFileAction = $('#selectedActionsList').find('.move');
+
+			// don't allow a second click on the download action
+			if(moveFileAction.hasClass('disabled')) {
+				event.preventDefault();
+				return;
+			}
+
+			var disableLoadingState = function(){
+				OCA.Files.FileActions.updateFileActionSpinner(moveFileAction, false);
+			};
+
+			OCA.Files.FileActions.updateFileActionSpinner(moveFileAction, true);
+			OC.dialogs.filepicker(t('files', 'Target folder'), function(targetPath) {
+				self.move(files, targetPath, disableLoadingState);
+			}, false, "httpd/unix-directory", true);
+			return false;
+		},
+
+		/**
+		 * Event handler for when clicking on "Copy" for the selected files
+		 */
+		_onClickCopySelected: function(event) {
+			var files;
+			var self = this;
+			var dir = this.getCurrentDirectory();
+			if (this.isAllSelected() && this.getSelectedFiles().length > 1) {
+				files = OC.basename(dir);
+				dir = OC.dirname(dir) || '/';
+			}
+			else {
+				files = _.pluck(this.getSelectedFiles(), 'name');
+			}
+
+			var copyFileAction = $('#selectedActionsList').find('.copy');
+
+			// don't allow a second click on the download action
+			if(copyFileAction.hasClass('disabled')) {
+				event.preventDefault();
+				return;
+			}
+
+			var disableLoadingState = function(){
+				OCA.Files.FileActions.updateFileActionSpinner(copyFileAction, false);
+			};
+
+			OCA.Files.FileActions.updateFileActionSpinner(copyFileAction, true);
+			OC.dialogs.filepicker(t('files', 'Target folder'), function(targetPath) {
+				self.copy(files, targetPath, disableLoadingState);
+			}, false, "httpd/unix-directory", true);
 			return false;
 		},
 
@@ -1944,13 +2014,15 @@
 			}
 			return index;
 		},
+
 		/**
 		 * Moves a file to a given target folder.
 		 *
 		 * @param fileNames array of file names to move
 		 * @param targetPath absolute target path
+		 * @param callback to call when move is finished with success
 		 */
-		move: function(fileNames, targetPath) {
+		move: function(fileNames, targetPath, callback) {
 			var self = this;
 			var dir = this.getCurrentDirectory();
 			if (dir.charAt(dir.length - 1) !== '/') {
@@ -2000,7 +2072,91 @@
 						self.showFileBusyState($tr, false);
 					});
 			});
+			if (callback) {
+				callback();
+			}
 
+		},
+
+		/**
+		 * Copies a file to a given target folder.
+		 *
+		 * @param fileNames array of file names to copy
+		 * @param targetPath absolute target path
+		 * @param callback to call when copy is finished with success
+		 */
+		copy: function(fileNames, targetPath, callback) {
+			var self = this;
+			var dir = this.getCurrentDirectory();
+			if (dir.charAt(dir.length - 1) !== '/') {
+				dir += '/';
+			}
+			var target = OC.basename(targetPath);
+			if (!_.isArray(fileNames)) {
+				fileNames = [fileNames];
+			}
+			_.each(fileNames, function(fileName) {
+				var $tr = self.findFileEl(fileName);
+				self.showFileBusyState($tr, true);
+				if (targetPath.charAt(targetPath.length - 1) !== '/') {
+					// make sure we move the files into the target dir,
+					// not overwrite it
+					targetPath = targetPath + '/';
+				}
+				self.filesClient.copy(dir + fileName, targetPath + fileName)
+					.fail(function(status) {
+						if (status === 412) {
+							// TODO: some day here we should invoke the conflict dialog
+							OC.Notification.show(t('files', 'Could not copy "{file}", target exists',
+								{file: fileName}), {type: 'error'}
+							);
+						} else {
+							OC.Notification.show(t('files', 'Could not copy "{file}"',
+								{file: fileName}), {type: 'error'}
+							);
+						}
+					})
+					.always(function() {
+						self.showFileBusyState($tr, false);
+					});
+			});
+
+			// Remove leading and ending /
+			if (targetPath.slice(0, 1) === '/') {
+				targetPath = targetPath.slice(1, targetPath.length);
+			}
+			if (targetPath.slice(-1) === '/') {
+				targetPath = targetPath.slice(0, -1);
+			}
+
+			// Since there's no visual indication that the files were copied, let's send some notifications !
+			if (fileNames.length === 1) {
+				OC.Notification.show(t('files', 'Copied {origin} inside {destination}',
+					{
+						origin: fileNames[0],
+						destination: targetPath
+					}
+				), {timeout: 10});
+			} else if (fileNames.length < 4) {
+				OC.Notification.show(t('files', 'Copied {origin} inside {destination}',
+					{
+						origin: fileNames.join(', '),
+						destination: targetPath
+					}
+				), {timeout: 10});
+			} else {
+				OC.Notification.show(t('files', 'Copied {origin} and {nbfiles} other files inside {destination}',
+					{
+						origin: fileNames[0],
+						nbfiles: fileNames.length,
+						destination: targetPath,
+					}
+				), {timeout: 10});
+			}
+
+			if (callback) {
+				callback();
+			}
 		},
 
 		/**
