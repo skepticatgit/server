@@ -596,7 +596,7 @@ services:
       matrix:
        ENABLE_REDIS: true
   cache-cluster:
-    image: grokzen/redis-cluster
+    image: morrisjobke/redis-cluster
     when:
       matrix:
        ENABLE_REDIS_CLUSTER: true
